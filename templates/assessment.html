@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width: 900px; margin: 2rem auto;">
+    <h2>Mental Health Assessment</h2>
+    <p>Answer each statement based on how you've felt over the past two weeks.</p>
+    <form method="POST">
+        {% for question in questions %}
+            {% set qname = 'q' ~ loop.index0 %}
+            <div class="form-field">
+                <label>{{ loop.index }}. {{ question }}</label>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem;">
+                    {% for value, label in [(0,'Not at all'),(1,'Several days'),(2,'More than half the days'),(3,'Nearly every day')] %}
+                        <label class="assessment-option">
+                            <input type="radio" name="{{ qname }}" value="{{ value }}" {% if value == 0 %}checked{% endif %} />
+                            <span class="assessment-option-title">{{ value }} — {{ label }}</span>
+                        </label>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endfor %}
+        <button class="btn" type="submit">Submit Assessment</button>
+    </form>
+    {% if result %}
+        <div class="feedback-box" style="background: {{ result.color }};">
+            <h3>{{ result.label }} score: {{ result.score }}</h3>
+            <p>{{ result.message }}</p>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

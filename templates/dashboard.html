@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block content %}
+<section style="margin-top: 1rem;">
+    <div class="card">
+        <p class="section-title">Good day, {{ current_user.name }}.</p>
+        <h2>Today’s wellness snapshot</h2>
+        <p>{{ daily_quote }}</p>
+    </div>
+    <div class="grid summary-grid" style="margin-top: 1.5rem;">
+        <div class="card small-card">
+            <h3>Last assessment</h3>
+            {% if last_assessment %}
+                <p><strong>{{ last_assessment.score }}</strong> — {{ last_assessment.severity }}</p>
+                <p>{{ last_assessment.created_at.strftime('%b %d, %Y') }}</p>
+            {% else %}
+                <p>No assessment yet.</p>
+            {% endif %}
+        </div>
+        <div class="card small-card">
+            <h3>Today’s mood</h3>
+            {% if today_entry %}
+                <p><strong>{{ today_entry.mood_score }}/5</strong> mood</p>
+                <p><strong>{{ today_entry.stress_level }}/10</strong> stress</p>
+            {% else %}
+                <p>Record your feelings in the mood tracker.</p>
+            {% endif %}
+        </div>
+        <div class="card small-card">
+            <h3>Current streak</h3>
+            <p><strong>{{ streak }} days</strong> of daily check-ins</p>
+        </div>
+    </div>
+    <div class="card" style="margin-top: 1.5rem;">
+        <h3>Weekly mood chart</h3>
+        <canvas id="dashboardChart" height="120"></canvas>
+    </div>
+    <div class="grid cards-4" style="margin-top: 1.5rem;">
+        <div class="card small-card">
+            <h4><a href="/assessment">Assessment</a></h4>
+            <p>Check in with a quick mental health survey.</p>
+        </div>
+        <div class="card small-card">
+            <h4><a href="/mood_tracker">Mood Tracker</a></h4>
+            <p>Share your mood, stress, and reflections.</p>
+        </div>
+        <div class="card small-card">
+            <h4><a href="/recommendations">Recommendations</a></h4>
+            <p>Get support tips based on your latest score.</p>
+        </div>
+        <div class="card small-card">
+            <h4><a href="/emergency">Emergency</a></h4>
+            <p>Access urgent Kenya-specific support contacts.</p>
+        </div>
+    </div>
+</section>
+
+<script>
+const labels = {{ chart_labels | safe }};
+const moodData = {{ mood_chart | safe }};
+const stressData = {{ stress_chart | safe }};
+const ctx = document.getElementById('dashboardChart').getContext('2d');
+new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: labels,
+        datasets: [
+            {
+                label: 'Mood',
+                data: moodData,
+                borderColor: '#1a5f7a',
+                backgroundColor: 'rgba(26, 95, 122, 0.12)',
+                tension: 0.35,
+                fill: true,
+            },
+            {
+                label: 'Stress',
+                data: stressData,
+                borderColor: '#f4d35e',
+                backgroundColor: 'rgba(244, 211, 94, 0.16)',
+                tension: 0.35,
+                fill: true,
+            },
+        ],
+    },
+    options: {
+        responsive: true,
+        plugins: { legend: { position: 'top' } },
+        scales: { y: { beginAtZero: true, max: 10 } },
+    },
+});
+</script>
+{% endblock %}

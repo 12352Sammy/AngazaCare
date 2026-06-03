@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width: 900px; margin: 2rem auto;">
+    <h2>Wellness Recommendations</h2>
+    {% if assessment %}
+        <p>Your last assessment score was <strong>{{ assessment.score }}</strong> ({{ assessment.severity }}).</p>
+        <div class="card-list">
+            {% for tip in tips %}
+                <div class="card small-card">
+                    <h4>• {{ tip }}</h4>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p>No assessment recorded yet. Complete an <a href="/assessment">assessment</a> to receive tailored tips.</p>
+    {% endif %}
+</div>
+{% endblock %}

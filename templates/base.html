@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AngazaCare - {{ title if title else 'Mental Health Support' }}</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script defer src="/static/js/main.js"></script>
+    <style>
+        #mw-ai-bubble {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(135deg, #3fa8a3, #83f0d6);
+            color: #fff;
+            font-weight: 700;
+            box-shadow: 0 16px 30px rgba(0, 0, 0, 0.18);
+            cursor: pointer;
+            display: grid;
+            place-items: center;
+            z-index: 9999;
+        }
+        #mw-ai-chat-container {
+            position: fixed;
+            bottom: 90px;
+            right: 20px;
+            width: min(380px, calc(100vw - 32px));
+            max-height: 520px;
+            background: #0f172a;
+            border-radius: 24px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            z-index: 9999;
+        }
+        #mw-ai-chat-container.open {
+            display: flex;
+        }
+        .mw-ai-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 16px;
+            background: #07101f;
+            color: #e2f7f1;
+            font-weight: 700;
+            font-size: 1rem;
+        }
+        .mw-ai-header button {
+            background: transparent;
+            border: none;
+            color: #e2f7f1;
+            font-size: 1.4rem;
+            cursor: pointer;
+        }
+        .mw-ai-messages {
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow-y: auto;
+            background: linear-gradient(180deg, #07101f 0%, #0f172a 100%);
+            flex: 1;
+        }
+        .mw-ai-message {
+            max-width: 82%;
+            padding: 12px 14px;
+            border-radius: 18px;
+            line-height: 1.5;
+            font-size: 0.95rem;
+            word-wrap: break-word;
+        }
+        .mw-ai-message.user {
+            align-self: flex-end;
+            background: #bff7e2;
+            color: #0f172a;
+            border-bottom-right-radius: 4px;
+        }
+        .mw-ai-message.ai {
+            align-self: flex-start;
+            background: #16213a;
+            color: #edf2fb;
+            border-bottom-left-radius: 4px;
+        }
+        .mw-ai-form {
+            display: flex;
+            gap: 8px;
+            padding: 14px 16px 16px;
+            background: #07101f;
+        }
+        .mw-ai-form input {
+            flex: 1;
+            min-width: 0;
+            padding: 12px 14px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: rgba(255, 255, 255, 0.06);
+            color: #f8fafc;
+            outline: none;
+        }
+        .mw-ai-form button {
+            border: none;
+            padding: 0 18px;
+            border-radius: 999px;
+            background: #3fa8a3;
+            color: #fff;
+            cursor: pointer;
+            font-weight: 700;
+        }
+        .mw-ai-error {
+            padding: 12px 16px;
+            color: #ffd7e2;
+            background: #581c35;
+            font-size: 0.9rem;
+        }
+        .mw-ai-loading {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .mw-ai-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #83f0d6;
+            animation: mw-dot 1.2s infinite ease-in-out;
+        }
+        .mw-ai-dot:nth-child(2) { animation-delay: 0.2s; }
+        .mw-ai-dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes mw-dot {
+            0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
+            40% { opacity: 1; transform: translateY(-4px); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <nav>
+                <div>
+                    <a href="/" style="font-weight: 700; font-size: 1.2rem;">AngazaCare</a>
+                </div>
+                <div class="nav-links">
+                    {% if current_user.is_authenticated %}
+                        <a href="/dashboard">Dashboard</a>
+                        <a href="/assessment">Assessment</a>
+                        <a href="/mood_tracker">Mood Tracker</a>
+                        <a href="/recommendations">Recommendations</a>
+                        <a href="/emergency">Emergency</a>
+                        <a href="/logout">Logout</a>
+                    {% else %}
+                        <a href="/login">Login</a>
+                        <a href="/register">Register</a>
+                    {% endif %}
+                </div>
+            </nav>
+        </div>
+    </header>
+    <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+    <footer>
+        <p>AngazaCare &copy; 2026 — Mental health support that feels personal.</p>
+    </footer>
+
+    <div id="mw-ai-chat-container">
+        <div class="mw-ai-header">
+            <span>AngazaCare AI</span>
+            <button id="mw-close-chat" aria-label="Close chat window">×</button>
+        </div>
+        <div id="mw-ai-messages" class="mw-ai-messages"></div>
+        <div id="mw-ai-error" class="mw-ai-error" hidden>AngazaCare AI is resting, please try again</div>
+        <form id="mw-ai-form" class="mw-ai-form">
+            <input id="mw-ai-input" type="text" placeholder="Type a message..." autocomplete="off" />
+            <button type="submit">Send</button>
+        </form>
+    </div>
+    <button id="mw-ai-bubble" aria-label="Open AngazaCare AI chat">AI</button>
+
+    <script>
+        const mwChatContainer = document.getElementById('mw-ai-chat-container');
+        const mwChatBubble = document.getElementById('mw-ai-bubble');
+        const mwCloseButton = document.getElementById('mw-close-chat');
+        const mwMessages = document.getElementById('mw-ai-messages');
+        const mwForm = document.getElementById('mw-ai-form');
+        const mwInput = document.getElementById('mw-ai-input');
+        const mwError = document.getElementById('mw-ai-error');
+
+        const chatHistory = [];
+
+        function renderMessage(text, sender, isLoading = false) {
+            const messageEl = document.createElement('div');
+            messageEl.className = `mw-ai-message ${sender}`;
+            if (isLoading) {
+                const loadingEl = document.createElement('span');
+                loadingEl.className = 'mw-ai-loading';
+                loadingEl.textContent = 'Thinking';
+                for (let i = 0; i < 3; i += 1) {
+                    const dot = document.createElement('span');
+                    dot.className = 'mw-ai-dot';
+                    loadingEl.appendChild(dot);
+                }
+                messageEl.appendChild(loadingEl);
+            } else {
+                messageEl.textContent = text;
+            }
+            mwMessages.appendChild(messageEl);
+            mwMessages.scrollTop = mwMessages.scrollHeight;
+            return messageEl;
+        }
+
+        function showError(message) {
+            mwError.textContent = message;
+            mwError.hidden = false;
+        }
+
+        function hideError() {
+            mwError.hidden = true;
+        }
+
+        function toggleChat() {
+            mwChatContainer.classList.toggle('open');
+            if (mwChatContainer.classList.contains('open')) {
+                mwInput.focus();
+            }
+        }
+
+        function addHistoryEntry(text, sender) {
+            chatHistory.push({ text, sender });
+        }
+
+        mwChatBubble.addEventListener('click', () => {
+            toggleChat();
+        });
+
+        mwCloseButton.addEventListener('click', () => {
+            mwChatContainer.classList.remove('open');
+        });
+
+        mwForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            hideError();
+            const message = mwInput.value.trim();
+            if (!message) {
+                showError('Please type a message to send.');
+                return;
+            }
+
+            addHistoryEntry(message, 'user');
+            renderMessage(message, 'user');
+            mwInput.value = '';
+            mwInput.focus();
+
+            const loadingMessage = renderMessage('', 'ai', true);
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message }),
+                });
+
+                const data = await response.json();
+                const reply = data.reply || 'AngazaCare AI is resting, please try again';
+                loadingMessage.textContent = reply;
+                loadingMessage.className = 'mw-ai-message ai';
+                addHistoryEntry(reply, 'ai');
+                if (!response.ok) {
+                    showError('AngazaCare AI is resting, please try again');
+                }
+            } catch (error) {
+                loadingMessage.textContent = 'AngazaCare AI is resting, please try again';
+                loadingMessage.className = 'mw-ai-message ai';
+                addHistoryEntry('AngazaCare AI is resting, please try again', 'ai');
+                showError('AngazaCare AI is resting, please try again');
+            }
+        });
+    </script>
+</body>
+</html>
