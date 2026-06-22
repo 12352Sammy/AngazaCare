@@ -11,8 +11,10 @@ from dotenv import load_dotenv
 from flask import Flask, flash, redirect, render_template, request, url_for, jsonify, session
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
 import bcrypt
+from functools import wraps
+from sqlalchemy import text
 
-from models import Assessment, MoodEntry, Recommendation, User, db, BreathingSession
+from models import Assessment, ChatMessage, MoodEntry, Recommendation, User, db, BreathingSession
 
 load_dotenv()
 if genai is not None:
@@ -140,13 +142,52 @@ def get_assessment_level(score):
 
 def init_db():
     with app.app_context():
-        if not os.path.exists("angazacare.db"):
-            db.create_all()
+        # Always ensure tables are created
+        db.create_all()
+        
+        # Only seed if no users exist
+        if User.query.count() == 0:
             seed_database()
-        else:
-            db.create_all()
-            if User.query.count() == 0:
-                seed_database()
+        
+        # Ensure admin user exists
+        ensure_admin_user()
+
+
+def ensure_schema():
+    """Ensure required database columns exist for both SQLite and PostgreSQL."""
+    try:
+        db_url = app.config["SQLALCHEMY_DATABASE_URI"]
+        with db.engine.connect() as conn:
+            if db_url.startswith("sqlite"):
+                # SQLite: use PRAGMA table_info
+                result = conn.execute(text("PRAGMA table_info('user');")).fetchall()
+                columns = [row[1] for row in result]
+                if "is_admin" not in columns:
+                    conn.execute(text("ALTER TABLE \"user\" ADD COLUMN is_admin BOOLEAN DEFAULT 0;"))
+                    conn.commit()
+            elif db_url.startswith("postgresql"):
+                # PostgreSQL: use information_schema
+                result = conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name='user' AND column_name='is_admin';"
+                )).fetchall()
+                if not result:
+                    conn.execute(text("ALTER TABLE \"user\" ADD COLUMN is_admin BOOLEAN DEFAULT FALSE;"))
+                    conn.commit()
+    except Exception as e:
+        app.logger.warning(f"Schema update attempted or not needed: {e}")
+
+
+def ensure_admin_user():
+    """Create an admin user if none exists."""
+    if not User.query.filter_by(email="admin@angazacare.com").first():
+        admin = User(
+            name="Admin Counselor",
+            email="admin@angazacare.com",
+            password_hash=hash_password("admin123"),
+            is_admin=True,
+        )
+        db.session.add(admin)
+        db.session.commit()
 
 
 def hash_password(password):
@@ -165,12 +206,14 @@ def seed_database():
     ]
 
     for user_data in demo_users:
-        user = User(
-            name=user_data["name"],
-            email=user_data["email"],
-            password_hash=hash_password(user_data["password"]),
-        )
-        db.session.add(user)
+        # Only add demo user if the email is not already present
+        if not User.query.filter_by(email=user_data["email"]).first():
+            user = User(
+                name=user_data["name"],
+                email=user_data["email"],
+                password_hash=hash_password(user_data["password"]),
+            )
+            db.session.add(user)
     db.session.commit()
 
     for user in User.query.all():
@@ -252,23 +295,126 @@ def check_crisis_flag(user):
     return low_mood_count == 3 or high_score
 
 
-def get_supportive_fallback(lang="en"):
-    """Get bilingual fallback responses based on preferred language."""
+def generate_supportive_reply(user_message, lang="en"):
+    """Generate a message-aware fallback reply when the AI backend cannot be used."""
+    text = (user_message or "").strip()
+    text_lower = text.lower()
+
     if lang == "sw":
-        fallback_responses = [
-            "Nakuona na niko hapa kukusaidia. Niambie zaidi kuhusu jinsi unavyohisi leo.",
-            "Hujatengwa. Naweza kukusaidia kutuliza akili yako na kupata hatua moja ndogo ya mbele.",
-            "Ni sawa kuhisi hivi. Shiriki kitu kimoja ambacho kingefanya leo iwe rahisi kidogo.",
-            "Tuelekeze kile kinachohisi inawezekana sasa. Niko hapa kukusikiliza na kukutia moyo.",
+        categories = {
+            "sleep": ["kulala", "usingizi", "nimechoka", "malalia", "usiku", "ndoto"],
+            "stress": ["msongo", "wasiwasi", "hofu", "shinikizo", "pressa", "msongo wa mawazo"],
+            "mood": ["huzuni", "samahani", "upweke", "buri", "siwezi", "mood"],
+            "relationships": ["rafiki", "familia", "mume", "mke", "wazazi", "mwalimu"],
+            "work": ["kazi", "shule", "mtihani", "mwanafunzi", "boss", "mafunzo"],
+        }
+        responses = {
+            "sleep": [
+                "Jaribu kuunda utaratibu wa kupumzika kabla ya kulala, kama kunywa chai ya moto au kusoma kwa sekunde chache.",
+                "Ikiwa usingizi ni mgumu, jaribu kupumua kwa mfululizo wa 4-4-6 na kuweka mazingira tulivu.",
+                "Hatua ndogo kabla ya kulala inaweza kusaidia mwili wako kuanza kupumzika.",
+            ],
+            "stress": [
+                "Ninaona msongo. Chukua sekunde 60 za kupumua kwa kina na andika moja ya hisia zako.",
+                "Jaribu kuzungumza na mtu unaemwamini au fanya mazoezi ya kupumua taratibu.",
+                "Punguza mawazo kwa kumwanga fursa moja ndogo ya kufanya kitu cha kuvutia leo.",
+            ],
+            "mood": [
+                "Ni sawa kuhisi hivi. Jaribu kutunza nafsi yako kwa hatua ndogo kama kunywa maji au kutembea kidogo.",
+                "Hisia zako ni muhimu. Pata wakati wa kuuliza 'Ninaweza kufanya nini kidogo sasa?' na kujibu kwa upole.",
+                "Jaribu kushirikiana hisia zako kwa mtu unayemwamini, hata kama ni kitu kimoja tu leo.",
+            ],
+            "relationships": [
+                "Kuzungumza na mtu anaweza kufanya mzigo uwe mwepesi. Anza kwa kuzungumza kuhusu jambo moja tu.",
+                "Mahusiano ni magumu, na hisia zako zinastahili kusikika. Jipe nafasi ya kuelezea unavyohisi.",
+                "Ikiwa unashindwa, jaribu kuelezea kwa uwazi kunaweza kusaidia kujisikia mbali kidogo.",
+            ],
+            "work": [
+                "Kazi na masomo vinaweza kuwa mzigo. Pumzika kwa dakika chache na utaone tofauti.",
+                "Tumia kidogo cha muda kutulia, kisha rudi kwa kazi kwa hatua ndogo ndogo.",
+                "Unafanya vizuri. Jaribu kujipa ruhusa ya kupumzika na kisha uendelee polepole.",
+            ],
+        }
+        general = [
+            "Niko hapa kukusaidia. Tueleze zaidi ili tuone hatua ndogo ya kufanya leo.",
+            "Ni sawa kuchukua hatua ndogo kuelekea kujisikia vizuri. Hisia zako zinastahili.",
+            "Jipe urahisi kwa kujali nafsi yako kwa hatua ndogo leo.",
+            "Usihisi kuwa peke yako. Chukua muda wa kupumua na kujali nafsi yako kwa upole.",
         ]
     else:
-        fallback_responses = [
-            "I hear you and I'm here to support you. Tell me more about how you're feeling today.",
-            "You're not alone. I can help you calm your mind and find one small step forward.",
-            "It's okay to feel this way. Share one thing that would make today a little easier.",
-            "Let's focus on what feels manageable right now. I'm here to listen and encourage you.",
+        categories = {
+            "sleep": ["sleep", "insomnia", "tired", "rest", "awake", "night"],
+            "stress": ["stress", "anxiety", "worried", "panic", "pressure", "overwhelmed"],
+            "mood": ["sad", "depressed", "down", "hopeless", "low", "lonely"],
+            "relationships": ["friend", "family", "partner", "boyfriend", "girlfriend", "husband", "wife", "parent", "boss"],
+            "work": ["work", "job", "school", "exam", "study", "college", "career"],
+        }
+        responses = {
+            "sleep": [
+                "If sleep is hard tonight, try a calm routine like lowering the lights and breathing slowly for a minute.",
+                "Rest can feel far away, but a gentle bedtime routine and keeping your phone away may help.",
+                "Sometimes the smallest change—like quieting your thoughts for one minute—helps your body relax.",
+            ],
+            "stress": [
+                "It sounds like stress is building. Focus on one small thing you can do right now to feel lighter.",
+                "Your feelings matter. Try writing down one worry and then setting it aside for a while.",
+                "A grounding step, such as feeling your feet on the floor and breathing slowly, can help you feel steadier.",
+            ],
+            "mood": [
+                "I hear you. When your mood dips, a tiny act of kindness toward yourself can help you hold on to hope.",
+                "It's okay to feel this way. Keep listening to what you need and take one manageable step.",
+                "Your emotions are real and important. A gentle moment of self-care can make a difference.",
+            ],
+            "relationships": [
+                "Relationships can be complicated. Talking with someone you trust about one thing on your mind may help.",
+                "You deserve to feel heard. Consider sharing how you're feeling with a friend or family member.",
+                "If this is about someone else, focus on what you can control and keep your well-being first.",
+            ],
+            "work": [
+                "Work and school pressure can feel heavy. Take a short break and do one small thing for yourself.",
+                "A busy schedule is draining. Give yourself permission to breathe, even if it's just for one minute.",
+                "You are doing your best. A small pause can help you feel more grounded.",
+            ],
+        }
+        general = [
+            "I'm here to listen and support you. Tell me more if you'd like, and we can find one small step together.",
+            "You don't have to carry this alone. Let's focus on something manageable right now.",
+            "A kind act for yourself can matter a lot. What is one easy thing you can do today?",
+            "Take one small step forward, even if it's just recognizing that your feelings are real and worth caring for.",
         ]
-    return random.choice(fallback_responses)
+
+    for category, keywords in categories.items():
+        if any(kw in text_lower for kw in keywords):
+            return random.choice(responses[category])
+
+    if any(phrase in text_lower for phrase in ["how can i", "what should i", "any advice", "help me", "what do i", "what can i", "what now"]):
+        if lang == "sw":
+            return random.choice([
+                "Jaribu kuanza na hatua ndogo ambayo inafaa kwako, kama kupumua taratibu au kuzungumza na rafiki.",
+                "Panga hatua ndogo ya kwanza, kisha ujaribu kufanya hiyo kabla ya kuelekea hatua inayofuata.",
+            ])
+        return random.choice([
+            "A good first step is one small, manageable action—like a short breath break or sharing how you feel with someone.",
+            "Try choosing one simple thing you can do right now to feel a little better and build from there.",
+        ])
+
+    if any(phrase in text_lower for phrase in ["thank", "thanks", "appreciate", "asante"]):
+        if lang == "sw":
+            return random.choice([
+                "Ni furaha yangu kusaidia. Endelea kujali hisia zako kwa hatua ndogo ndogo.",
+                "Asante kwa kushiriki. Niko hapa kila unapohitaji msaada.",
+            ])
+        return random.choice([
+            "You're welcome. I'm here to support you whenever you need it.",
+            "Glad to be here for you. Keep checking in with yourself and take it one step at a time.",
+        ])
+
+    return random.choice(general)
+
+
+def get_supportive_fallback(user_message=None, lang="en"):
+    """Get bilingual fallback responses that are tailored to the user's message."""
+    return generate_supportive_reply(user_message, lang=lang)
 
 
 def get_recent_mood_summary(user, days=7):
@@ -331,15 +477,43 @@ def login():
         return redirect(url_for("dashboard"))
 
     if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
-        user = User.query.filter_by(email=email).first()
-        if user and check_password(password, user.password_hash):
-            login_user(user)
-            return redirect(url_for("dashboard"))
-        flash("Invalid email or password.", "danger")
+        try:
+            email = request.form.get("email")
+            password = request.form.get("password")
+            user = User.query.filter_by(email=email).first()
+            if user and check_password(password, user.password_hash):
+                login_user(user)
+                return redirect(url_for("dashboard"))
+            flash("Invalid email or password.", "danger")
+        except Exception as e:
+            app.logger.exception("Login error")
+            flash("An error occurred during login. Please try again.", "danger")
 
     return render_template("login.html")
+
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if current_user.is_authenticated:
+        if current_user.is_admin:
+            return redirect(url_for("admin_dashboard"))
+        flash("You are already logged in as a user.", "warning")
+        return redirect(url_for("dashboard"))
+
+    if request.method == "POST":
+        try:
+            email = request.form.get("email")
+            password = request.form.get("password")
+            user = User.query.filter_by(email=email).first()
+            if user and check_password(password, user.password_hash) and getattr(user, "is_admin", False):
+                login_user(user)
+                return redirect(url_for("admin_dashboard"))
+            flash("Invalid admin email or password.", "danger")
+        except Exception as e:
+            app.logger.exception("Admin login error")
+            flash("An error occurred during admin login. Please try again.", "danger")
+
+    return render_template("admin_login.html")
 
 
 @app.route("/logout")
@@ -348,6 +522,58 @@ def logout():
     logout_user()
     flash("You have been logged out.", "info")
     return redirect(url_for("login"))
+
+
+def admin_required(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not current_user.is_authenticated or not getattr(current_user, "is_admin", False):
+            flash("Admin access required.", "danger")
+            return redirect(url_for("admin_login"))
+        return func(*args, **kwargs)
+    return wrapper
+
+
+@app.route("/admin")
+@admin_required
+def admin_dashboard():
+    total_messages = ChatMessage.query.count()
+    crisis_count = ChatMessage.query.filter_by(is_crisis=True).count()
+    flagged_count = ChatMessage.query.filter_by(is_flagged=True).count()
+    open_count = ChatMessage.query.filter_by(status="open").count()
+    reviewed_count = ChatMessage.query.filter_by(status="reviewed").count()
+    resolved_count = ChatMessage.query.filter_by(status="resolved").count()
+    latest_crisis = ChatMessage.query.filter_by(is_crisis=True).order_by(ChatMessage.created_at.desc()).limit(5).all()
+    messages = ChatMessage.query.order_by(ChatMessage.created_at.desc()).limit(200).all()
+    return render_template(
+        "admin_dashboard.html",
+        chat_messages=messages,
+        total_messages=total_messages,
+        crisis_count=crisis_count,
+        flagged_count=flagged_count,
+        open_count=open_count,
+        reviewed_count=reviewed_count,
+        resolved_count=resolved_count,
+        latest_crisis=latest_crisis,
+        current_lang=get_language(),
+        t=TRANSLATIONS[get_language()],
+    )
+
+
+@app.route("/admin/message/<int:message_id>/update", methods=["POST"])
+@admin_required
+def admin_update_message(message_id):
+    message = ChatMessage.query.get_or_404(message_id)
+    status = request.form.get("status")
+    flag = request.form.get("flag") == "on"
+    flag_reason = request.form.get("flag_reason")
+    if status in ["open", "reviewed", "resolved"]:
+        message.status = status
+    message.is_flagged = flag
+    message.flag_reason = flag_reason if flag else None
+    db.session.commit()
+    flash("Chat message updated.", "success")
+    return redirect(url_for("admin_dashboard"))
 
 
 @app.route("/set_language/<lang>")
@@ -567,6 +793,7 @@ TRANSLATIONS = {
         "email_registered": "Email already registered.",
         "invalid_credentials": "Invalid email or password.",
         "logged_out": "You have been logged out.",
+        "admin": "Admin",
     },
     "sw": {
         "dashboard": "Dashibodi",
@@ -651,24 +878,41 @@ def chat():
         return jsonify({"reply": "Please enter a message."}), 400
 
     # Check for crisis markers first
-    if has_crisis_markers(user_message):
+    is_crisis = has_crisis_markers(user_message)
+    if is_crisis:
         crisis_msg = (
             f"I hear you and I care. Please reach Befrienders Kenya: {KIRAYA_KB['befrienders']} (24/7, free)\\n\\n"
             f"Nakuona na nakujali. Tafadhali wasiliana Befrienders Kenya: {KIRAYA_KB['befrienders']} (24/7, bure)"
         )
+        if current_user.is_authenticated:
+            chat = ChatMessage(
+                user_id=current_user.id,
+                user_message=user_message,
+                ai_response=crisis_msg,
+                is_crisis=True,
+                status="open",
+            )
+            db.session.add(chat)
+            db.session.commit()
         return jsonify({"reply": crisis_msg}), 200
 
+    preferred_lang = get_language()
     if not genai or not os.getenv("GEMINI_API_KEY"):
-        fallback_reply = get_supportive_fallback()
-        # Use user's language preference for fallback if set
-        preferred_lang = get_language()
-        if preferred_lang == "sw":
-            # Swap to Kiswahili version if available
-            fallback_reply = get_supportive_fallback(lang="sw")
+        fallback_reply = get_supportive_fallback(user_message=user_message, lang=preferred_lang)
+        if current_user.is_authenticated:
+            chat = ChatMessage(
+                user_id=current_user.id,
+                user_message=user_message,
+                ai_response=fallback_reply,
+                is_crisis=False,
+                status="open",
+            )
+            db.session.add(chat)
+            db.session.commit()
         return jsonify({"reply": fallback_reply}), 200
 
     # Use session language preference, or detect from message
-    user_lang = get_language()  # Gets preferred language from session
+    user_lang = preferred_lang  # Gets preferred language from session
     if user_lang == "en":
         lang_instruction = "Respond in English."
     else:
@@ -677,9 +921,10 @@ def chat():
     system_prompt = (
         "You are AngazaCare AI, a compassionate mental health companion for Kenyans. "
         f"{lang_instruction} "
-        "Be concise (2-3 sentences), empathetic, and non-judgmental. Never diagnose. "
-        "Use warm, practical advice. When relevant, suggest one small action the user can take today. "
-        "Remind them they are not alone."
+        "Be empathetic, non-judgmental, and practical. Never diagnose. "
+        "Use fresh phrasing each time so your response does not sound repetitive. "
+        "When relevant, suggest one small action the user can take today. "
+        "Make the answer specific to the user's question and remind them they are not alone."
     )
 
     user_context = []
@@ -716,11 +961,23 @@ def chat():
     try:
         model = genai.GenerativeModel(model_name="models/gemini-flash-latest")
         response = model.generate_content(messages)
-        ai_response = response.text.strip() if response and getattr(response, "text", None) else get_supportive_fallback()
-        return jsonify({"reply": ai_response})
+        ai_response = response.text.strip() if response and getattr(response, "text", None) else get_supportive_fallback(user_message=user_message, lang=preferred_lang)
     except Exception as exc:
         app.logger.exception("AI chat failed")
-        return jsonify({"reply": get_supportive_fallback()}), 200
+        ai_response = get_supportive_fallback(user_message=user_message, lang=preferred_lang)
+
+    if current_user.is_authenticated:
+        chat = ChatMessage(
+            user_id=current_user.id,
+            user_message=user_message,
+            ai_response=ai_response,
+            is_crisis=False,
+            status="open",
+        )
+        db.session.add(chat)
+        db.session.commit()
+
+    return jsonify({"reply": ai_response})
 
 @app.route("/api/mood-history")
 @login_required
