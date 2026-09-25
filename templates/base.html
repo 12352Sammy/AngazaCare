@@ -149,10 +149,13 @@
                 <div class="nav-links">
                     {% if current_user.is_authenticated %}
                         <a href="/dashboard">{{ t.get('dashboard', 'Dashboard') if t else 'Dashboard' }}</a>
-                        <a href="/assessment">{{ t.get('assessment', 'Assessment') if t else 'Assessment' }}</a>
+                        <a href="/assessment">{{ t.get('assessme', 'Assessme') if t else 'Assessme' }}</a>
                         <a href="/mood_tracker">{{ t.get('mood_tracker', 'Mood Tracker') if t else 'Mood Tracker' }}</a>
                         <a href="/recommendations">{{ t.get('recommendations', 'Recommendations') if t else 'Recommendations' }}</a>
                         <a href="/emergency">{{ t.get('emergency', 'Emergency') if t else 'Emergency' }}</a>
+                        {% if current_user.is_admin %}
+                            <a href="/admin">{{ t.get('admin', 'Admin') if t else 'Admin' }}</a>
+                        {% endif %}
                         <a href="/logout">{{ t.get('logout', 'Logout') if t else 'Logout' }}</a>
                     {% else %}
                         <a href="/login">{{ t.get('login', 'Login') if t else 'Login' }}</a>

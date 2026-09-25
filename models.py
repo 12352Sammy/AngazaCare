@@ -12,6 +12,7 @@ class User(UserMixin, db.Model):
     name = db.Column(db.String(120), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
+    is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     mood_entries = db.relationship("MoodEntry", backref="user", lazy=True)
     assessments = db.relationship("Assessment", backref="user", lazy=True)
@@ -61,3 +62,17 @@ class BreathingSession(db.Model):
     technique = db.Column(db.String(50), nullable=False)
     duration_minutes = db.Column(db.Integer, nullable=False)
     date = db.Column(db.Date, nullable=False)
+
+
+class ChatMessage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    user_message = db.Column(db.Text, nullable=False)
+    ai_response = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    is_crisis = db.Column(db.Boolean, default=False)
+    is_flagged = db.Column(db.Boolean, default=False)
+    status = db.Column(db.String(50), default="open")
+    flag_reason = db.Column(db.String(255), nullable=True)
+
+    user = db.relationship("User", backref="chat_messages")

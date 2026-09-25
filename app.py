@@ -495,7 +495,7 @@ def login():
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     if current_user.is_authenticated:
-        if current_user.is_admin:
+        if getattr(current_user, "role", None) == "psychiatrist":
             return redirect(url_for("admin_dashboard"))
         flash("You are already logged in as a user.", "warning")
         return redirect(url_for("dashboard"))
@@ -505,7 +505,7 @@ def admin_login():
             email = request.form.get("email")
             password = request.form.get("password")
             user = User.query.filter_by(email=email).first()
-            if user and check_password(password, user.password_hash) and getattr(user, "is_admin", False):
+            if user and check_password(password, user.password_hash) and getattr(user, "role", None) == "psychiatrist":
                 login_user(user)
                 return redirect(url_for("admin_dashboard"))
             flash("Invalid admin email or password.", "danger")
@@ -527,7 +527,7 @@ def logout():
 def admin_required(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        if not current_user.is_authenticated or not getattr(current_user, "is_admin", False):
+        if not current_user.is_authenticated or getattr(current_user, "role", None) != "psychiatrist":
             flash("Admin access required.", "danger")
             return redirect(url_for("admin_login"))
         return func(*args, **kwargs)

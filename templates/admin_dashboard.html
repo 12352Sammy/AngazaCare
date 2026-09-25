@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block content %}
+<section style="margin-top: 1rem;">
+    <div class="card">
+        <p class="section-title">Admin Dashboard</p>
+        <h2>Psychologist & Counselor Response Center</h2>
+        <p>Review user chats, identify crises, and update message status for follow-up.</p>
+    </div>
+
+    <div class="grid summary-grid" style="margin-top: 1.5rem; gap: 1rem;">
+        <div class="card small-card">
+            <h3>Total chats</h3>
+            <p><strong>{{ total_messages }}</strong></p>
+        </div>
+        <div class="card small-card">
+            <h3>Crisis alerts</h3>
+            <p><strong>{{ crisis_count }}</strong></p>
+        </div>
+        <div class="card small-card">
+            <h3>Flagged</h3>
+            <p><strong>{{ flagged_count }}</strong></p>
+        </div>
+        <div class="card small-card">
+            <h3>Open</h3>
+            <p><strong>{{ open_count }}</strong></p>
+        </div>
+        <div class="card small-card">
+            <h3>Reviewed</h3>
+            <p><strong>{{ reviewed_count }}</strong></p>
+        </div>
+        <div class="card small-card">
+            <h3>Resolved</h3>
+            <p><strong>{{ resolved_count }}</strong></p>
+        </div>
+    </div>
+
+    {% if latest_crisis %}
+    <div class="card" style="margin-top: 1.5rem;">
+        <h3>Latest Crisis Chats</h3>
+        <ul style="margin: 0; padding-left: 1.2rem;">
+            {% for message in latest_crisis %}
+                <li style="margin-bottom: 0.75rem;">
+                    <strong>Anonymous user #{{ message.user_id }}</strong> — {{ message.created_at.strftime('%Y-%m-%d %H:%M') }}
+                    <div style="font-size:0.95rem; color:#e2f7f1; margin-top:0.25rem;">{{ message.user_message }}</div>
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <div class="card" style="margin-top: 1.5rem; overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; min-width: 840px;">
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Message</th>
+                    <th>AI Response</th>
+                    <th>Crisis</th>
+                    <th>Status</th>
+                    <th>Flag</th>
+                    <th>Updated</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for message in chat_messages %}
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+                        <td>Anonymous user #{{ message.user_id }}</td>
+                        <td>{{ message.user_message }}</td>
+                        <td>{{ message.ai_response }}</td>
+                        <td>{{ 'Yes' if message.is_crisis else 'No' }}</td>
+                        <td>{{ message.status }}</td>
+                        <td>{{ 'Yes' if message.is_flagged else 'No' }}</td>
+                        <td>{{ message.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td>
+                            <form action="/admin/message/{{ message.id }}/update" method="post" style="display:grid; gap:0.4rem;">
+                                <select name="status" style="padding:0.35rem; border-radius:0.5rem; border:1px solid rgba(255,255,255,0.16); background:#07101f; color:#e2f7f1;">
+                                    <option value="open" {% if message.status == 'open' %}selected{% endif %}>Open</option>
+                                    <option value="reviewed" {% if message.status == 'reviewed' %}selected{% endif %}>Reviewed</option>
+                                    <option value="resolved" {% if message.status == 'resolved' %}selected{% endif %}>Resolved</option>
+                                </select>
+                                <label style="font-size:0.9rem; display:flex; align-items:center; gap:0.4rem;">
+                                    <input type="checkbox" name="flag" {% if message.is_flagged %}checked{% endif %} /> Flag
+                                </label>
+                                <input type="text" name="flag_reason" placeholder="Reason" value="{{ message.flag_reason or '' }}" style="padding:0.35rem; border-radius:0.5rem; border:1px solid rgba(255,255,255,0.16); background:#07101f; color:#e2f7f1;" />
+                                <button type="submit" style="padding:0.5rem 0.8rem; border:none; border-radius:0.75rem; background:#3fa8a3; color:#fff; cursor:pointer;">Save</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="8">No chat messages available yet.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}
